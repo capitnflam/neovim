@@ -4259,7 +4259,6 @@ static struct {
 
 static void uc_list(char_u *name, size_t name_len)
 {
-  int i, j;
   int found = FALSE;
   ucmd_T      *cmd;
   int len;
@@ -4268,6 +4267,7 @@ static void uc_list(char_u *name, size_t name_len)
 
   gap = &curbuf->b_ucmds;
   for (;; ) {
+    int i;
     for (i = 0; i < gap->ga_len; ++i) {
       cmd = USER_CMD_GA(gap, i);
       a = (long)cmd->uc_argt;
@@ -4334,7 +4334,7 @@ static void uc_list(char_u *name, size_t name_len)
       } while (len < 11);
 
       /* Completion */
-      for (j = 0; command_complete[j].expand != 0; ++j)
+      for (int j = 0; command_complete[j].expand != 0; ++j)
         if (command_complete[j].expand == cmd->uc_compl) {
           STRCPY(IObuff + len, command_complete[j].name);
           len += (int)STRLEN(IObuff + len);
@@ -4564,10 +4564,9 @@ void ex_comclear(exarg_T *eap)
  */
 void uc_clear(garray_T *gap)
 {
-  int i;
   ucmd_T      *cmd;
 
-  for (i = 0; i < gap->ga_len; ++i) {
+  for (int i = 0; i < gap->ga_len; ++i) {
     cmd = USER_CMD_GA(gap, i);
     free(cmd->uc_name);
     free(cmd->uc_rep);
@@ -5909,7 +5908,7 @@ static void ex_resize(exarg_T *eap)
   n = atol((char *)eap->arg);
   if (cmdmod.split & WSP_VERT) {
     if (*eap->arg == '-' || *eap->arg == '+')
-      n += W_WIDTH(curwin);
+      n += curwin->w_width;
     else if (n == 0 && eap->arg[0] == NUL)      /* default is very wide */
       n = 9999;
     win_setwidth_win((int)n, wp);
@@ -6394,9 +6393,9 @@ static void ex_sleep(exarg_T *eap)
   long len;
 
   if (cursor_valid()) {
-    n = W_WINROW(curwin) + curwin->w_wrow - msg_scrolled;
+    n = curwin->w_winrow + curwin->w_wrow - msg_scrolled;
     if (n >= 0)
-      windgoto((int)n, W_WINCOL(curwin) + curwin->w_wcol);
+      windgoto((int)n, curwin->w_wincol + curwin->w_wcol);
   }
 
   len = eap->line2;
@@ -8481,7 +8480,6 @@ ses_arglist (
     unsigned *flagp
 )
 {
-  int i;
   char_u      *buf = NULL;
   char_u      *s;
 
@@ -8491,7 +8489,7 @@ ses_arglist (
   if (put_line(fd, "silent! argdel *") == FAIL) {
     return FAIL;
   }
-  for (i = 0; i < gap->ga_len; ++i) {
+  for (int i = 0; i < gap->ga_len; ++i) {
     /* NULL file names are skipped (only happens when out of memory). */
     s = alist_name(&((aentry_T *)gap->ga_data)[i]);
     if (s != NULL) {
