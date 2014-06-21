@@ -3,12 +3,15 @@
 upstream_setup() {
     git remote add upstream https://github.com/neovim/neovim.git ;
     git fetch upstream ;
+    rm -f cscope.out ;
+    cscope -Rb ;
 }
 
 upstream_update() {
     git fetch upstream ;
     git checkout master ;
     git merge upstream/master ;
+    cscope -Rb ;
 }
 
 case "$1" in
