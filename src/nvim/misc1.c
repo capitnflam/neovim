@@ -10,9 +10,13 @@
  * misc1.c: functions that didn't seem to fit elsewhere
  */
 
+#include <errno.h>
+#include <inttypes.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include "nvim/vim.h"
+#include "nvim/ascii.h"
 #include "nvim/version_defs.h"
 #include "nvim/misc1.h"
 #include "nvim/charset.h"
@@ -48,6 +52,7 @@
 #include "nvim/strings.h"
 #include "nvim/tag.h"
 #include "nvim/term.h"
+#include "nvim/tempfile.h"
 #include "nvim/ui.h"
 #include "nvim/undo.h"
 #include "nvim/window.h"
@@ -58,7 +63,7 @@
 # include "misc1.c.generated.h"
 #endif
 /* All user names (for ~user completion as done by shell). */
-static garray_T ga_users;
+static garray_T ga_users = GA_EMPTY_INIT_VALUE;
 
 /*
  * open_line: Add a new line below or above the current line.
@@ -189,7 +194,7 @@ open_line (
     /*
      * count white space on current line
      */
-    newindent = get_indent_str(saved_line, (int)curbuf->b_p_ts);
+    newindent = get_indent_str(saved_line, (int)curbuf->b_p_ts, FALSE);
     if (newindent == 0 && !(flags & OPENLINE_COM_LIST))
       newindent = second_line_indent;       /* for ^^D command in insert mode */
 
@@ -626,7 +631,7 @@ open_line (
         if (curbuf->b_p_ai
             || do_si
             )
-          newindent = get_indent_str(leader, (int)curbuf->b_p_ts);
+          newindent = get_indent_str(leader, (int)curbuf->b_p_ts, FALSE);
 
         /* Add the indent offset */
         if (newindent + off < 0) {
@@ -1301,6 +1306,7 @@ int plines_win_col(win_T *wp, linenr_T lnum, long column)
   char_u      *s;
   int lines = 0;
   int width;
+  char_u *line;
 
   /* Check for filler lines above this buffer line.  When folded the result
    * is one line anyway. */
@@ -1312,11 +1318,11 @@ int plines_win_col(win_T *wp, linenr_T lnum, long column)
   if (wp->w_width == 0)
     return lines + 1;
 
-  s = ml_get_buf(wp->w_buffer, lnum, FALSE);
+  line = s = ml_get_buf(wp->w_buffer, lnum, FALSE);
 
   col = 0;
   while (*s != NUL && --column >= 0) {
-    col += win_lbr_chartabsize(wp, s, (colnr_T)col, NULL);
+    col += win_lbr_chartabsize(wp, line, s, (colnr_T)col, NULL);
     mb_ptr_adv(s);
   }
 
@@ -1328,7 +1334,7 @@ int plines_win_col(win_T *wp, linenr_T lnum, long column)
    * 'ts') -- webb.
    */
   if (*s == TAB && (State & NORMAL) && (!wp->w_p_list || lcs_tab1))
-    col += win_lbr_chartabsize(wp, s, (colnr_T)col, NULL) - 1;
+    col += win_lbr_chartabsize(wp, line, s, (colnr_T)col, NULL) - 1;
 
   /*
    * Add column offset for 'number', 'relativenumber', 'foldcolumn', etc.
@@ -1834,7 +1840,7 @@ void changed(void)
        * and don't let the emsg() set msg_scroll. */
       if (need_wait_return && emsg_silent == 0) {
         out_flush();
-        ui_delay(2000L, TRUE);
+        ui_delay(2000L, true);
         wait_return(TRUE);
         msg_scroll = save_msg_scroll;
       }
@@ -2257,7 +2263,7 @@ change_warning (
     (void)msg_end();
     if (msg_silent == 0 && !silent_mode) {
       out_flush();
-      ui_delay(1000L, TRUE);       /* give the user time to think about it */
+      ui_delay(1000L, true);       /* give the user time to think about it */
     }
     curbuf->b_did_warn = TRUE;
     redraw_cmdline = FALSE;     /* don't redraw and erase the message */
@@ -3324,8 +3330,6 @@ void prepare_to_exit(void)
  */
 void preserve_exit(void)
 {
-  buf_T       *buf;
-
   // Prevent repeated calls into this method.
   if (really_exiting) {
     exit(2);
@@ -3341,7 +3345,7 @@ void preserve_exit(void)
 
   ml_close_notmod();                /* close all not-modified buffers */
 
-  for (buf = firstbuf; buf != NULL; buf = buf->b_next) {
+  FOR_ALL_BUFFERS(buf) {
     if (buf->b_ml.ml_mfp != NULL && buf->b_ml.ml_mfp->mf_fname != NULL) {
       OUT_STR("Vim: preserving files...\n");
       screen_start();               /* don't know where cursor is now */
@@ -3419,7 +3423,7 @@ get_cmd_output (
     return NULL;
 
   /* get a name for the temp file */
-  if ((tempname = vim_tempname('o')) == NULL) {
+  if ((tempname = vim_tempname()) == NULL) {
     EMSG(_(e_notmp));
     return NULL;
   }

@@ -1,6 +1,10 @@
 // fs.c -- filesystem access
+#include <stdbool.h>
+
+#include <assert.h>
 
 #include "nvim/os/os.h"
+#include "nvim/ascii.h"
 #include "nvim/memory.h"
 #include "nvim/message.h"
 #include "nvim/misc1.h"
@@ -37,9 +41,9 @@ int os_dirname(char_u *buf, size_t len)
 {
   assert(buf && len);
 
-  int errno;
-  if ((errno = uv_cwd((char *)buf, &len)) != kLibuvSuccess) {
-    STRLCPY(buf, uv_strerror(errno), len);
+  int error_number;
+  if ((error_number = uv_cwd((char *)buf, &len)) != kLibuvSuccess) {
+    STRLCPY(buf, uv_strerror(error_number), len);
     return FAIL;
   }
   return OK;
@@ -92,7 +96,7 @@ static bool is_executable(const char_u *name)
     return false;
   }
 
-  if (S_ISREG(mode) && (S_IEXEC & mode)) {
+  if (S_ISREG(mode) && (S_IXUSR & mode)) {
     return true;
   }
 
@@ -146,22 +150,34 @@ static bool is_executable_in_path(const char_u *name)
   return false;
 }
 
+/// Opens or creates a file and returns a non-negative integer representing
+/// the lowest-numbered unused file descriptor, for use in subsequent system
+/// calls (read, write, lseek, fcntl, etc.). If the operation fails, `-errno`
+/// is returned, and no file is created or modified.
+///
+/// @param flags Bitwise OR of flags defined in <fcntl.h>
+/// @param mode Permissions for the newly-created file (IGNORED if 'flags' is
+///        not `O_CREAT` or `O_TMPFILE`), subject to the current umask
+/// @return file descriptor, or negative `errno` on failure
+int os_open(const char* path, int flags, int mode)
+{
+  uv_fs_t open_req;
+  int r = uv_fs_open(uv_default_loop(), &open_req, path, flags, mode, NULL);
+  uv_fs_req_cleanup(&open_req);
+  // r is the same as open_req.result (except for OOM: then only r is set).
+  return r;
+}
+
 /// Get stat information for a file.
 ///
 /// @return OK on success, FAIL if a failure occurred.
-int os_stat(const char_u *name, uv_stat_t *statbuf)
+static bool os_stat(const char *name, uv_stat_t *statbuf)
 {
   uv_fs_t request;
-  int result = uv_fs_stat(uv_default_loop(), &request,
-                          (const char *)name, NULL);
+  int result = uv_fs_stat(uv_default_loop(), &request, name, NULL);
   *statbuf = request.statbuf;
   uv_fs_req_cleanup(&request);
-
-  if (result == kLibuvSuccess) {
-    return OK;
-  }
-
-  return FAIL;
+  return (result == kLibuvSuccess);
 }
 
 /// Get the file permissions for a given file.
@@ -170,10 +186,10 @@ int os_stat(const char_u *name, uv_stat_t *statbuf)
 int32_t os_getperm(const char_u *name)
 {
   uv_stat_t statbuf;
-  if (os_stat(name, &statbuf) == FAIL) {
-    return -1;
-  } else {
+  if (os_stat((char *)name, &statbuf)) {
     return (int32_t)statbuf.st_mode;
+  } else {
+    return -1;
   }
 }
 
@@ -194,17 +210,28 @@ int os_setperm(const char_u *name, int perm)
   return FAIL;
 }
 
+/// Changes the ownership of the file referred to by the open file descriptor.
+///
+/// @return `0` on success, a libuv error code on failure.
+///
+/// @note If the `owner` or `group` is specified as `-1`, then that ID is not
+/// changed.
+int os_fchown(int file_descriptor, uv_uid_t owner, uv_gid_t group)
+{
+  uv_fs_t request;
+  int result = uv_fs_fchown(uv_default_loop(), &request, file_descriptor,
+                            owner, group, NULL);
+  uv_fs_req_cleanup(&request);
+  return result;
+}
+
 /// Check if a file exists.
 ///
 /// @return `true` if `name` exists.
 bool os_file_exists(const char_u *name)
 {
   uv_stat_t statbuf;
-  if (os_stat(name, &statbuf) == OK) {
-    return true;
-  }
-
-  return false;
+  return os_stat((char *)name, &statbuf);
 }
 
 /// Check if a file is readonly.
@@ -238,7 +265,7 @@ int os_file_is_writable(const char *name)
 bool os_get_file_size(const char *name, off_t *size)
 {
   uv_stat_t statbuf;
-  if (os_stat((char_u *)name, &statbuf) == OK) {
+  if (os_stat(name, &statbuf)) {
     *size = statbuf.st_size;
     return true;
   }
@@ -273,6 +300,24 @@ int os_mkdir(const char *path, int32_t mode)
   return result;
 }
 
+/// Create a unique temporary directory.
+///
+/// @param[in] template Template of the path to the directory with XXXXXX
+///                     which would be replaced by random chars.
+/// @param[out] path Path to created directory for success, undefined for
+///                  failure.
+/// @return `0` for success, non-zero for failure.
+int os_mkdtemp(const char *template, char *path)
+{
+  uv_fs_t request;
+  int result = uv_fs_mkdtemp(uv_default_loop(), &request, template, NULL);
+  if (result == kLibuvSuccess) {
+    strcpy(path, request.path);
+  }
+  uv_fs_req_cleanup(&request);
+  return result;
+}
+
 /// Remove a directory.
 ///
 /// @return `0` for success, non-zero for failure.
@@ -297,15 +342,12 @@ int os_remove(const char *path)
 
 /// Get the file information for a given path
 ///
-/// @param file_descriptor File descriptor of the file.
+/// @param path Path to the file.
 /// @param[out] file_info Pointer to a FileInfo to put the information in.
 /// @return `true` on success, `false` for failure.
 bool os_get_file_info(const char *path, FileInfo *file_info)
 {
-  if (os_stat((char_u *)path, &(file_info->stat)) == OK) {
-    return true;
-  }
-  return false;
+  return os_stat(path, &(file_info->stat));
 }
 
 /// Get the file information for a given path without following links
@@ -319,10 +361,7 @@ bool os_get_file_info_link(const char *path, FileInfo *file_info)
   int result = uv_fs_lstat(uv_default_loop(), &request, path, NULL);
   file_info->stat = request.statbuf;
   uv_fs_req_cleanup(&request);
-  if (result == kLibuvSuccess) {
-    return true;
-  }
-  return false;
+  return (result == kLibuvSuccess);
 }
 
 /// Get the file information for a given file descriptor
@@ -336,17 +375,75 @@ bool os_get_file_info_fd(int file_descriptor, FileInfo *file_info)
   int result = uv_fs_fstat(uv_default_loop(), &request, file_descriptor, NULL);
   file_info->stat = request.statbuf;
   uv_fs_req_cleanup(&request);
-  if (result == kLibuvSuccess) {
-    return true;
-  }
-  return false;
+  return (result == kLibuvSuccess);
 }
 
 /// Compare the inodes of two FileInfos
 ///
 /// @return `true` if the two FileInfos represent the same file.
-bool os_file_info_id_equal(FileInfo *file_info_1, FileInfo *file_info_2)
+bool os_file_info_id_equal(const FileInfo *file_info_1,
+                           const FileInfo *file_info_2)
 {
   return file_info_1->stat.st_ino == file_info_2->stat.st_ino
          && file_info_1->stat.st_dev == file_info_2->stat.st_dev;
 }
+
+/// Get the `FileID` of a `FileInfo`
+///
+/// @param file_info Pointer to the `FileInfo`
+/// @param[out] file_id Pointer to a `FileID`
+void os_file_info_get_id(const FileInfo *file_info, FileID *file_id)
+{
+  file_id->inode = file_info->stat.st_ino;
+  file_id->device_id = file_info->stat.st_dev;
+}
+
+/// Get the inode of a `FileInfo`
+///
+/// @deprecated Use `FileID` instead, this function is only needed in memline.c
+/// @param file_info Pointer to the `FileInfo`
+/// @return the inode number
+uint64_t os_file_info_get_inode(const FileInfo *file_info)
+{
+  return file_info->stat.st_ino;
+}
+
+/// Get the `FileID` for a given path
+///
+/// @param path Path to the file.
+/// @param[out] file_info Pointer to a `FileID` to fill in.
+/// @return `true` on sucess, `false` for failure.
+bool os_get_file_id(const char *path, FileID *file_id)
+{
+  uv_stat_t statbuf;
+  if (os_stat(path, &statbuf)) {
+    file_id->inode = statbuf.st_ino;
+    file_id->device_id = statbuf.st_dev;
+    return true;
+  }
+  return false;
+}
+
+/// Check if two `FileID`s are equal
+///
+/// @param file_id_1 Pointer to first `FileID`
+/// @param file_id_2 Pointer to second `FileID`
+/// @return `true` if the two `FileID`s represent te same file.
+bool os_file_id_equal(const FileID *file_id_1, const FileID *file_id_2)
+{
+  return file_id_1->inode == file_id_2->inode
+         && file_id_1->device_id == file_id_2->device_id;
+}
+
+/// Check if a `FileID` is equal to a `FileInfo`
+///
+/// @param file_id Pointer to a `FileID`
+/// @param file_info Pointer to a `FileInfo`
+/// @return `true` if the `FileID` and the `FileInfo` represent te same file.
+bool os_file_id_equal_file_info(const FileID *file_id,
+                                const FileInfo *file_info)
+{
+  return file_id->inode == file_info->stat.st_ino
+         && file_id->device_id == file_info->stat.st_dev;
+}
+

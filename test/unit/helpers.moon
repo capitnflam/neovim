@@ -88,14 +88,31 @@ cimport './src/nvim/types.h'
 
 -- take a pointer to a C-allocated string and return an interned
 -- version while also freeing the memory
-internalize = (cdata) ->
+internalize = (cdata, len) ->
   ffi.gc cdata, ffi.C.free
-  return ffi.string cdata
+  return ffi.string cdata, len
 
 cstr = ffi.typeof 'char[?]'
 
 to_cstr = (string) ->
   cstr (string.len string) + 1, string
+
+export vim_init_called
+-- initialize some global variables, this is still necessary to unit test
+-- functions that rely on global state.
+vim_init = ->
+  if vim_init_called ~= nil
+    return
+  -- import os_unix.h for mch_early_init(), which initializes some globals
+  os = cimport './src/nvim/os_unix.h'
+  os.mch_early_init!
+  vim_init_called = true
+
+-- C constants.
+NULL = ffi.cast 'void*', 0
+
+OK   = 1
+FAIL = 0
 
 return {
   cimport: cimport
@@ -107,4 +124,8 @@ return {
   lib: libnvim
   cstr: cstr
   to_cstr: to_cstr
+  vim_init: vim_init
+  NULL: NULL
+  OK: OK
+  FAIL: FAIL
 }

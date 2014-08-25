@@ -3,6 +3,7 @@
 #include <uv.h>
 
 #include "nvim/types.h"
+#include "nvim/ascii.h"
 #include "nvim/vim.h"
 #include "nvim/globals.h"
 #include "nvim/memline.h"
@@ -25,7 +26,7 @@ static bool rejecting_deadly;
 #ifdef INCLUDE_GENERATED_DECLARATIONS
 # include "os/signal.c.generated.h"
 #endif
-void signal_init()
+void signal_init(void)
 {
   uv_signal_init(uv_default_loop(), &sint);
   uv_signal_init(uv_default_loop(), &spipe);
@@ -45,7 +46,7 @@ void signal_init()
 #endif
 }
 
-void signal_stop()
+void signal_stop(void)
 {
   uv_signal_stop(&sint);
   uv_signal_stop(&spipe);
@@ -58,12 +59,12 @@ void signal_stop()
 #endif
 }
 
-void signal_reject_deadly()
+void signal_reject_deadly(void)
 {
   rejecting_deadly = true;
 }
 
-void signal_accept_deadly()
+void signal_accept_deadly(void)
 {
   rejecting_deadly = false;
 }
@@ -100,6 +101,11 @@ void signal_handle(Event event)
       fprintf(stderr, "Invalid signal %d", signum);
       break;
   }
+}
+
+EventSource signal_event_source(void)
+{
+  return &sint;
 }
 
 static char * signal_name(int signum)
@@ -154,10 +160,11 @@ static void signal_cb(uv_signal_t *handle, int signum)
   }
 
   Event event = {
+    .source = signal_event_source(),
     .type = kEventSignal,
     .data = {
       .signum = signum
     }
   };
-  event_push(event, true);
+  event_push(event);
 }

@@ -10,9 +10,13 @@
  * quickfix.c: functions for quickfix mode, using a file with error messages
  */
 
+#include <errno.h>
+#include <inttypes.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include "nvim/vim.h"
+#include "nvim/ascii.h"
 #include "nvim/quickfix.h"
 #include "nvim/buffer.h"
 #include "nvim/charset.h"
@@ -43,6 +47,7 @@
 #include "nvim/search.h"
 #include "nvim/strings.h"
 #include "nvim/term.h"
+#include "nvim/tempfile.h"
 #include "nvim/ui.h"
 #include "nvim/window.h"
 #include "nvim/os/os.h"
@@ -1383,7 +1388,7 @@ void qf_jump(qf_info_T *qi, int dir, int errornr, int forceit)
         if (wp->w_buffer != NULL && wp->w_buffer->b_help)
           break;
     if (wp != NULL && wp->w_buffer->b_nwindows > 0)
-      win_enter(wp, TRUE);
+      win_enter(wp, true);
     else {
       /*
        * Split off help window; put it at far top if no position
@@ -2533,7 +2538,7 @@ static char_u *get_mef_name(void)
   static int off = 0;
 
   if (*p_mef == NUL) {
-    name = vim_tempname('e');
+    name = vim_tempname();
     if (name == NULL)
       EMSG(_(e_notmp));
     return name;
@@ -2793,7 +2798,7 @@ void ex_vimgrep(exarg_T *eap)
       ;
 
   /* parse the list of arguments */
-  if (get_arglist_exp(p, &fcount, &fnames, TRUE) == FAIL)
+  if (get_arglist_exp(p, &fcount, &fnames, true) == FAIL)
     goto theend;
   if (fcount == 0) {
     EMSG(_(e_nomatch));
@@ -3535,7 +3540,11 @@ void ex_helpgrep(exarg_T *eap)
       /* Find all "*.txt" and "*.??x" files in the "doc" directory. */
       add_pathsep(NameBuff);
       STRCAT(NameBuff, "doc/*.\\(txt\\|??x\\)");
-      if (gen_expand_wildcards(1, &NameBuff, &fcount,
+
+      // Note: We cannot just do `&NameBuff` because it is a statically sized array
+      //       so `NameBuff == &NameBuff` according to C semantics.
+      char_u *buff_list[1] = {(char_u*) NameBuff};
+      if (gen_expand_wildcards(1, buff_list, &fcount,
               &fnames, EW_FILE|EW_SILENT) == OK
           && fcount > 0) {
         for (fi = 0; fi < fcount && !got_int; ++fi) {

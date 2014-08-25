@@ -46,8 +46,8 @@ endif()
 
 include(ExternalProject)
 
-set(LIBUV_URL https://github.com/joyent/libuv/archive/v0.11.23.tar.gz)
-set(LIBUV_MD5 e02a3da9fba9ebe72a84e4abd312ee4d)
+set(LIBUV_URL https://github.com/joyent/libuv/archive/v0.11.28.tar.gz)
+set(LIBUV_MD5 1a849ba4fc571d531482ed74bc7aabc4)
 
 set(MSGPACK_URL https://github.com/msgpack/msgpack-c/releases/download/cpp-0.5.8/msgpack-0.5.8.tar.gz)
 set(MSGPACK_MD5 ea0bee0939d2980c0df91f0e4843ccc4)
@@ -55,8 +55,8 @@ set(MSGPACK_MD5 ea0bee0939d2980c0df91f0e4843ccc4)
 set(LUAJIT_URL http://luajit.org/download/LuaJIT-2.0.3.tar.gz)
 set(LUAJIT_MD5 f14e9104be513913810cd59c8c658dc0)
 
-set(LUAROCKS_URL http://github.com/keplerproject/luarocks/archive/v2.1.2.tar.gz)
-set(LUAROCKS_MD5 df591c00a85d51fb754ec08c77896aad)
+set(LUAROCKS_URL https://github.com/keplerproject/luarocks/archive/v2.2.0beta1.tar.gz)
+set(LUAROCKS_MD5 d865fd8c333d6daca98ea052ff919043)
 
 if(USE_BUNDLED_LIBUV)
   ExternalProject_Add(libuv
@@ -115,6 +115,7 @@ if(USE_BUNDLED_LUAJIT)
     BUILD_COMMAND ""
     INSTALL_COMMAND ${MAKE_PRG} CC=${CMAKE_C_COMPILER}
                                 PREFIX=${DEPS_INSTALL_DIR}
+                                CFLAGS=-fPIC
                                 BUILDMODE=static
                                 install)
   list(APPEND THIRD_PARTY_DEPS luajit)
@@ -151,7 +152,6 @@ if(USE_BUNDLED_LUAROCKS)
 
   add_custom_command(OUTPUT ${DEPS_BIN_DIR}/moon ${DEPS_BIN_DIR}/moonc
     COMMAND ${DEPS_BIN_DIR}/luarocks ARGS install moonscript
-            --server=http://rocks.moonscript.org
     DEPENDS luarocks)
   add_custom_target(moonscript
     DEPENDS ${DEPS_BIN_DIR}/moon ${DEPS_BIN_DIR}/moonc)
@@ -161,7 +161,6 @@ if(USE_BUNDLED_LUAROCKS)
   # to be serialized.
   add_custom_command(OUTPUT ${DEPS_BIN_DIR}/busted
     COMMAND ${DEPS_BIN_DIR}/luarocks ARGS install busted 1.10.0
-            --server=http://rocks.moonscript.org
     DEPENDS moonscript)
   add_custom_target(busted
     DEPENDS ${DEPS_BIN_DIR}/busted)

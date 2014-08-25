@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,6 +6,7 @@
 #include "nvim/api/private/helpers.h"
 #include "nvim/api/private/defs.h"
 #include "nvim/api/private/handle.h"
+#include "nvim/ascii.h"
 #include "nvim/vim.h"
 #include "nvim/buffer.h"
 #include "nvim/window.h"
@@ -20,7 +22,7 @@
 #endif
 
 /// Start block that may cause vimscript exceptions
-void try_start()
+void try_start(void)
 {
   ++trylevel;
 }
@@ -341,7 +343,21 @@ String cstr_to_string(const char *str)
     };
 }
 
-static bool object_to_vim(Object obj, typval_T *tv, Error *err)
+/// Creates a String using the given C string. Unlike
+/// cstr_to_string this function DOES NOT copy the C string.
+///
+/// @param str the C string to use
+/// @return The resulting String, or an empty String if
+///           str was NULL
+String cstr_as_string(char *str) FUNC_ATTR_PURE
+{
+  if (str == NULL) {
+    return (String) STRING_INIT;
+  }
+  return (String) {.data = str, .size = strlen(str)};
+}
+
+bool object_to_vim(Object obj, typval_T *tv, Error *err)
 {
   tv->v_type = VAR_UNKNOWN;
   tv->v_lock = 0;
@@ -426,6 +442,8 @@ static bool object_to_vim(Object obj, typval_T *tv, Error *err)
       }
       tv->vval.v_dict->dv_refcount++;
       break;
+    default:
+      abort();
   }
 
   return true;

@@ -1,5 +1,7 @@
 // Much of this code was adapted from 'if_py_both.h' from the original
 // vim source
+#include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -107,6 +109,7 @@ StringArray buffer_get_slice(Buffer buffer,
   }
 
   start = normalize_index(buf, start) + (include_start ? 0 : 1);
+  include_end = include_end || (end >= buf->b_ml.ml_line_count);
   end = normalize_index(buf, end) + (include_end ? 1 : 0);
 
   if (start >= end) {
@@ -167,6 +170,7 @@ void buffer_set_slice(Buffer buffer,
   }
 
   start = normalize_index(buf, start) + (include_start ? 0 : 1);
+  include_end = include_end || (end >= buf->b_ml.ml_line_count);
   end = normalize_index(buf, end) + (include_end ? 1 : 0);
 
   if (start > end) {
@@ -486,7 +490,7 @@ static void switch_to_win_for_buf(buf_T *buf,
   win_T *wp;
   tabpage_T *tp;
 
-  if (find_win_for_buf(buf, &wp, &tp) == FAIL
+  if (!find_win_for_buf(buf, &wp, &tp)
       || switch_win(save_curwinp, save_curtabp, wp, tp, true) == FAIL)
     switch_buffer(save_curbufp, buf);
 }

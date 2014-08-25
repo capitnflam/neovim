@@ -1,6 +1,12 @@
+
+#include <assert.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <stdbool.h>
 #include <stdlib.h>
 
 #include "nvim/vim.h"
+#include "nvim/ascii.h"
 #include "nvim/path.h"
 #include "nvim/charset.h"
 #include "nvim/eval.h"
@@ -52,13 +58,13 @@ FileComparison path_full_compare(char_u *s1, char_u *s2, int checkname)
   char_u exp1[MAXPATHL];
   char_u full1[MAXPATHL];
   char_u full2[MAXPATHL];
-  uv_stat_t st1, st2;
+  FileID file_id_1, file_id_2;
 
   expand_env(s1, exp1, MAXPATHL);
-  int r1 = os_stat(exp1, &st1);
-  int r2 = os_stat(s2, &st2);
-  if (r1 != OK && r2 != OK) {
-    // If os_stat() doesn't work, may compare the names.
+  bool id_ok_1 = os_get_file_id((char *)exp1, &file_id_1);
+  bool id_ok_2 = os_get_file_id((char *)s2, &file_id_2);
+  if (!id_ok_1 && !id_ok_2) {
+    // If os_get_file_id() doesn't work, may compare the names.
     if (checkname) {
       vim_FullName(exp1, full1, MAXPATHL, FALSE);
       vim_FullName(s2, full2, MAXPATHL, FALSE);
@@ -68,10 +74,10 @@ FileComparison path_full_compare(char_u *s1, char_u *s2, int checkname)
     }
     return kBothFilesMissing;
   }
-  if (r1 != OK || r2 != OK) {
+  if (!id_ok_1 || !id_ok_2) {
     return kOneFileMissing;
   }
-  if (st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino) {
+  if (os_file_id_equal(&file_id_1, &file_id_2)) {
     return kEqualFiles;
   }
   return kDifferentFiles;
@@ -122,6 +128,35 @@ char_u *path_tail_with_sep(char_u *fname)
   while (tail > past_head && after_pathsep(fname, tail)) {
     tail--;
   }
+  return tail;
+}
+
+/// Finds the path tail (or executable) in an invocation.
+///
+/// @param[in]  invocation A program invocation in the form:
+///                        "path/to/exe [args]".
+/// @param[out] len Stores the length of the executable name.
+///
+/// @post if `len` is not null, stores the length of the executable name.
+///
+/// @return The position of the last path separator + 1.
+const char_u *invocation_path_tail(const char_u *invocation, size_t *len)
+    FUNC_ATTR_NONNULL_RET FUNC_ATTR_NONNULL_ARG(1)
+{
+  const char_u *tail = get_past_head((char_u *) invocation);
+  const char_u *p = tail;
+  while (*p != NUL && *p != ' ') {
+    bool was_sep = vim_ispathsep_nocolon(*p);
+    mb_ptr_adv(p);
+    if (was_sep) {
+      tail = p;  // Now tail points one past the separator.
+    }
+  }
+
+  if (len != NULL) {
+    *len = (size_t)(p - tail);
+  }
+
   return tail;
 }
 
@@ -625,7 +660,6 @@ static void expand_path_option(char_u *curdir, garray_T *gap)
   char_u      *path_option = *curbuf->b_p_path == NUL
                              ? p_path : curbuf->b_p_path;
   char_u      *buf;
-  char_u      *p;
   int len;
 
   buf = xmalloc(MAXPATHL);
@@ -639,7 +673,7 @@ static void expand_path_option(char_u *curdir, garray_T *gap)
        * "/path/file"  + "./subdir" -> "/path/subdir" */
       if (curbuf->b_ffname == NULL)
         continue;
-      p = path_tail(curbuf->b_ffname);
+      char_u *p = path_tail(curbuf->b_ffname);
       len = (int)(p - curbuf->b_ffname);
       if (len + (int)STRLEN(buf) >= MAXPATHL)
         continue;
@@ -666,10 +700,7 @@ static void expand_path_option(char_u *curdir, garray_T *gap)
       simplify_filename(buf);
     }
 
-    ga_grow(gap, 1);
-
-    p = vim_strsave(buf);
-    ((char_u **)gap->ga_data)[gap->ga_len++] = p;
+    GA_APPEND(char_u *, gap, vim_strsave(buf));
   }
 
   free(buf);
@@ -895,9 +926,6 @@ expand_in_path (
 {
   char_u      *curdir;
   garray_T path_ga;
-  char_u      *files = NULL;
-  char_u      *s;       /* start */
-  char_u      *e;       /* end */
   char_u      *paths = NULL;
 
   curdir = xmalloc(MAXPATHL);
@@ -912,28 +940,8 @@ expand_in_path (
   paths = ga_concat_strings(&path_ga);
   ga_clear_strings(&path_ga);
 
-  files = globpath(paths, pattern, (flags & EW_ICASE) ? WILD_ICASE : 0);
+  globpath(paths, pattern, gap, (flags & EW_ICASE) ? WILD_ICASE : 0);
   free(paths);
-  if (files == NULL)
-    return 0;
-
-  /* Copy each path in files into gap */
-  s = e = files;
-  while (*s != NUL) {
-    while (*e != '\n' && *e != NUL)
-      e++;
-    if (*e == NUL) {
-      addfile(gap, s, flags);
-      break;
-    } else {
-      /* *e is '\n' */
-      *e = NUL;
-      addfile(gap, s, flags);
-      e++;
-      s = e;
-    }
-  }
-  free(files);
 
   return gap->ga_len;
 }
@@ -1194,7 +1202,6 @@ addfile (
     int flags
 )
 {
-  char_u      *p;
   bool isdir;
 
   /* if the file/dir doesn't exist, may not add it */
@@ -1215,10 +1222,7 @@ addfile (
   if (!isdir && (flags & EW_EXEC) && !os_can_exe(f))
     return;
 
-  /* Make room for another item in the file list. */
-  ga_grow(gap, 1);
-
-  p = xmalloc(STRLEN(f) + 1 + isdir);
+  char_u *p = xmalloc(STRLEN(f) + 1 + isdir);
 
   STRCPY(p, f);
 #ifdef BACKSLASH_IN_FILENAME
@@ -1227,11 +1231,9 @@ addfile (
   /*
    * Append a slash or backslash after directory names if none is present.
    */
-#ifndef DONT_ADD_PATHSEP_TO_DIR
   if (isdir && (flags & EW_ADDSLASH))
     add_pathsep(p);
-#endif
-  ((char_u **)gap->ga_data)[gap->ga_len++] = p;
+  GA_APPEND(char_u *, gap, p);
 }
 #endif /* !NO_EXPANDPATH */
 

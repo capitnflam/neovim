@@ -8,6 +8,7 @@
 #include "nvim/os/event.h"
 #include "nvim/os/rstream_defs.h"
 #include "nvim/os/rstream.h"
+#include "nvim/ascii.h"
 #include "nvim/vim.h"
 #include "nvim/ui.h"
 #include "nvim/fileio.h"
@@ -31,26 +32,20 @@ static bool eof = false, started_reading = false;
 // Helper function used to push bytes from the 'event' key sequence partially
 // between calls to os_inchar when maxlen < 3
 
-void input_init()
+void input_init(void)
 {
-  read_stream = rstream_new(read_cb, READ_BUFFER_SIZE, NULL, false);
+  read_stream = rstream_new(read_cb, READ_BUFFER_SIZE, NULL, NULL);
   rstream_set_file(read_stream, read_cmd_fd);
 }
 
-// Check if there's pending input
-bool input_ready()
-{
-  return rstream_available(read_stream) > 0 || eof;
-}
-
 // Listen for input
-void input_start()
+void input_start(void)
 {
   rstream_start(read_stream);
 }
 
 // Stop listening for input
-void input_stop()
+void input_stop(void)
 {
   rstream_stop(read_stream);
 }
@@ -110,16 +105,16 @@ int os_inchar(uint8_t *buf, int maxlen, int32_t ms, int tb_change_cnt)
 }
 
 // Check if a character is available for reading
-bool os_char_avail()
+bool os_char_avail(void)
 {
   return inbuf_poll(0) == kInputAvail;
 }
 
 // Check for CTRL-C typed by reading all available characters.
 // In cooked mode we should get SIGINT, no need to check.
-void os_breakcheck()
+void os_breakcheck(void)
 {
-  if (curr_tmode == TMODE_RAW && event_poll(0))
+  if (curr_tmode == TMODE_RAW && input_poll(0))
     fill_input_buf(false);
 }
 
@@ -132,6 +127,16 @@ bool os_isatty(int fd)
     return uv_guess_handle(fd) == UV_TTY;
 }
 
+static bool input_poll(int32_t ms)
+{
+  EventSource input_sources[] = {
+    rstream_event_source(read_stream),
+    NULL
+  };
+
+  return input_ready() || event_poll(ms, input_sources) || input_ready();
+}
+
 // This is a replacement for the old `WaitForChar` function in os_unix.c
 static InbufPollResult inbuf_poll(int32_t ms)
 {
@@ -139,7 +144,7 @@ static InbufPollResult inbuf_poll(int32_t ms)
     return kInputAvail;
   }
 
-  if (event_poll(ms)) {
+  if (input_poll(ms)) {
     return eof && rstream_available(read_stream) == 0 ?
       kInputEof :
       kInputAvail;
@@ -148,7 +153,7 @@ static InbufPollResult inbuf_poll(int32_t ms)
   return kInputNone;
 }
 
-static void stderr_switch()
+static void stderr_switch(void)
 {
   int mode = cur_tmode;
   // We probably set the wrong file descriptor to raw mode. Switch back to
@@ -196,3 +201,10 @@ static int push_event_key(uint8_t *buf, int maxlen)
 
   return buf_idx;
 }
+
+// Check if there's pending input
+bool input_ready(void)
+{
+  return rstream_available(read_stream) > 0 || eof;
+}
+

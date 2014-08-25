@@ -1,24 +1,28 @@
+#include <assert.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "nvim/api/vim.h"
+#include "nvim/ascii.h"
 #include "nvim/api/private/helpers.h"
 #include "nvim/api/private/defs.h"
 #include "nvim/api/buffer.h"
 #include "nvim/os/channel.h"
+#include "nvim/os/provider.h"
 #include "nvim/vim.h"
 #include "nvim/buffer.h"
 #include "nvim/window.h"
 #include "nvim/types.h"
-#include "nvim/ascii.h"
 #include "nvim/ex_docmd.h"
 #include "nvim/screen.h"
 #include "nvim/memory.h"
 #include "nvim/message.h"
 #include "nvim/eval.h"
 #include "nvim/misc2.h"
+#include "nvim/term.h"
+#include "nvim/getchar.h"
 
 #define LINE_BUFFER_SIZE 4096
 
@@ -45,6 +49,57 @@ void vim_command(String str, Error *err)
   do_cmdline_cmd((char_u *) str.data);
   update_screen(VALID);
   try_end(err);
+}
+
+/// Pass input keys to Neovim
+///
+/// @param keys to be typed
+/// @param mode specifies the mapping options
+/// @see feedkeys()
+void vim_feedkeys(String keys, String mode)
+{
+  bool remap = true;
+  bool typed = false;
+
+  if (keys.size == 0) {
+    return;
+  }
+
+  for (size_t i = 0; i < mode.size; ++i) {
+    switch (mode.data[i]) {
+    case 'n': remap = false; break;
+    case 'm': remap = true; break;
+    case 't': typed = true; break;
+    }
+  }
+
+  /* Need to escape K_SPECIAL and CSI before putting the string in the
+   * typeahead buffer. */
+  char *keys_esc = (char *)vim_strsave_escape_csi((char_u *)keys.data);
+  ins_typebuf((char_u *)keys_esc, (remap ? REMAP_YES : REMAP_NONE),
+      typebuf.tb_len, !typed, false);
+  free(keys_esc);
+
+  if (vgetc_busy)
+    typebuf_was_filled = true;
+}
+
+/// Replace any terminal codes with the internal representation
+///
+/// @see replace_termcodes
+/// @see cpoptions
+String vim_replace_termcodes(String str, Boolean from_part, Boolean do_lt,
+                              Boolean special)
+{
+  if (str.size == 0) {
+    // Empty string
+    return str;
+  }
+
+  char *ptr = NULL;
+  replace_termcodes((char_u *)str.data, (char_u **)&ptr,
+                                            from_part, do_lt, special);
+  return cstr_as_string(ptr);
 }
 
 /// Evaluates the expression str using the vim internal expression
@@ -424,8 +479,8 @@ void vim_set_current_tabpage(Tabpage tabpage, Error *err)
 /// @param event The event type string
 void vim_subscribe(uint64_t channel_id, String event)
 {
-  size_t length = (event.size < EVENT_MAXLEN ? event.size : EVENT_MAXLEN);
-  char e[EVENT_MAXLEN + 1];
+  size_t length = (event.size < METHOD_MAXLEN ? event.size : METHOD_MAXLEN);
+  char e[METHOD_MAXLEN + 1];
   memcpy(e, event.data, length);
   e[length] = NUL;
   channel_subscribe(channel_id, e);
@@ -437,11 +492,29 @@ void vim_subscribe(uint64_t channel_id, String event)
 /// @param event The event type string
 void vim_unsubscribe(uint64_t channel_id, String event)
 {
-  size_t length = (event.size < EVENT_MAXLEN ? event.size : EVENT_MAXLEN);
-  char e[EVENT_MAXLEN + 1];
+  size_t length = (event.size < METHOD_MAXLEN ?
+                   event.size :
+                   METHOD_MAXLEN);
+  char e[METHOD_MAXLEN + 1];
   memcpy(e, event.data, length);
   e[length] = NUL;
   channel_unsubscribe(channel_id, e);
+}
+
+/// Registers the channel as the provider for `method`. This fails if
+/// a provider for `method` is already registered.
+///
+/// @param channel_id The channel id
+/// @param method The method name
+/// @param[out] err Details of an error that may have occurred
+void vim_register_provider(uint64_t channel_id, String method, Error *err)
+{
+  char buf[METHOD_MAXLEN];
+  xstrlcpy(buf, method.data, sizeof(buf));
+
+  if (!provider_register(buf, channel_id)) {
+    set_api_error("Provider already registered", err);
+  }
 }
 
 /// Writes a message to vim output or error buffer. The string is split
@@ -453,23 +526,24 @@ void vim_unsubscribe(uint64_t channel_id, String event)
 ///        `emsg` instead of `msg` to print each line)
 static void write_msg(String message, bool to_err)
 {
-  static int pos = 0;
-  static char line_buf[LINE_BUFFER_SIZE];
+  static int out_pos = 0, err_pos = 0;
+  static char out_line_buf[LINE_BUFFER_SIZE], err_line_buf[LINE_BUFFER_SIZE];
+
+#define PUSH_CHAR(i, pos, line_buf, msg)                                      \
+  if (message.data[i] == NL || pos == LINE_BUFFER_SIZE - 1) {                 \
+    line_buf[pos] = NUL;                                                      \
+    msg((uint8_t *)line_buf);                                                 \
+    pos = 0;                                                                  \
+    continue;                                                                 \
+  }                                                                           \
+                                                                              \
+  line_buf[pos++] = message.data[i];
 
   for (uint32_t i = 0; i < message.size; i++) {
-    if (message.data[i] == NL || pos == LINE_BUFFER_SIZE - 1) {
-      // Flush line
-      line_buf[pos] = NUL;
-      if (to_err) {
-        emsg((uint8_t *)line_buf);
-      } else {
-        msg((uint8_t *)line_buf);
-      }
-
-      pos = 0;
-      continue;
+    if (to_err) {
+      PUSH_CHAR(i, err_pos, err_line_buf, emsg);
+    } else {
+      PUSH_CHAR(i, out_pos, out_line_buf, msg);
     }
-
-    line_buf[pos++] = message.data[i];
   }
 }

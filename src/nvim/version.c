@@ -10,10 +10,14 @@
 /// All the remarks about older versions have been removed, they are not very
 /// interesting.
 
+#include <inttypes.h>
+
 #include "nvim/vim.h"
+#include "nvim/ascii.h"
 #include "nvim/version.h"
 #include "nvim/charset.h"
 #include "nvim/memline.h"
+#include "nvim/memory.h"
 #include "nvim/message.h"
 #include "nvim/misc2.h"
 #include "nvim/screen.h"
@@ -57,11 +61,7 @@ static char *(features[]) = {
   "+conceal",
   "+cscope",
   "+cursorbind",
-#ifdef CURSOR_SHAPE
   "+cursorshape",
-#else  // ifdef CURSOR_SHAPE
-  "-cursorshape",
-#endif  // ifdef CURSOR_SHAPE
   "+dialog_con",
   "+diff",
   "+digraphs",
@@ -98,11 +98,7 @@ static char *(features[]) = {
   "+jumplist",
   "+keymap",
   "+langmap",
-#ifdef FEAT_LIBCALL
   "+libcall",
-#else   // ifdef FEAT_LIBCALL
-  "-libcall",
-#endif  // ifdef FEAT_LIBCALL
   "+linebreak",
   "+lispindent",
   "+listcmds",
@@ -116,11 +112,6 @@ static char *(features[]) = {
 #if defined(UNIX)
   "+mouse_dec",
   "-mouse_gpm",
-# ifdef FEAT_MOUSE_JSB
-  "+mouse_jsbterm",
-# else  // ifdef FEAT_MOUSE_JSB
-  "-mouse_jsbterm",
-# endif  // ifdef FEAT_MOUSE_JSB
   "+mouse_netterm",
 #endif  // if defined(UNIX)
 
@@ -145,20 +136,12 @@ static char *(features[]) = {
   "+scrollbind",
   "+signs",
   "+smartindent",
-#ifdef STARTUPTIME
   "+startuptime",
-#else  // ifdef STARTUPTIME
-  "-startuptime",
-#endif  // ifdef STARTUPTIME
   "+statusline",
   "+syntax",
   "+tag_binary",
   "+tag_old_static",
-#ifdef FEAT_TAG_ANYWHITE
-  "+tag_any_white",
-#else  // ifdef FEAT_TAG_ANYWHITE
   "-tag_any_white",
-#endif  // ifdef FEAT_TAG_ANYWHITE
 #if defined(UNIX)
 
   // only Unix can have terminfo instead of termcap
@@ -202,36 +185,130 @@ static char *(features[]) = {
 
 static int included_patches[] = {
   // Add new patch number below this line
-  //316,
-  //315,
-  //314,
+  //410,
+  //409,
+  //408,
+  //407,
+  //406,
+  //405,
+  //404,
+  //403,
+  //402,
+  //401,
+  //400,
+  //399,
+  //398,
+  //397,
+  //396,
+  //395,
+  //394,
+  //393,
+  //392,
+  //391,
+  //390,
+  //389,
+  388,
+  //387,
+  //386,
+  //385,
+  //384,
+  //383,
+  //382,
+  //381,
+  //380 NA
+  //379,
+  //378,
+  //377,
+  //376,
+  //375,
+  //374,
+  //373,
+  //372,
+  371,
+  370,
+  //369,
+  //368,
+  //367,
+  //366,
+  //365,
+  //364,
+  //363,
+  //362,
+  //361,
+  //360,
+  //359,
+  //358,
+  //357,
+  //356 NA
+  //355,
+  //354,
+  353,
+  352,
+  //351,
+  //350,
+  //349,
+  //348,
+  //347,
+  346,
+  //345,
+  //344,
+  //343,
+  //342 NA
+  //341,
+  //340 NA
+  339,
+  338,
+  //337,
+  //336,
+  335,
+  //334,
+  //333 NA
+  //332 NA
+  331,
+  //330,
+  329,
+  328,
+  327,
+  //326 NA
+  325,
+  //324,
+  323,
+  //322 NA
+  //321 NA
+  //320,
+  //319 NA
+  318,
+  317,
+  //316 NA
+  315,
+  314,
   //313,
   //312,
   //311,
   //310,
-  //309,
-  //308,
-  //307,
-  //306,
+  309,
+  308,
+  //307 NA
+  306,
   //305,
-  //304,
+  //304 NA
   303,
   302,
   301,
-  //300,
-  //299,
+  //300 NA
+  //299 NA
   298,
   //297,
-  //296,
-  //295,
-  //294,
-  //293,
+  296,
+  295,
+  294,
+  293,
   292,
-  //291,
+  291,
   290,
   289,
   288,
-  //287,
+  //287 NA
   286,
   285,
   284,
@@ -239,16 +316,16 @@ static int included_patches[] = {
   282,
   281,
   280,
-  //279,
+  279,
   //278,
   277,
-  //276,
+  276,
   275,
   274,
-  //273,
+  //273 NA
   272,
   //271,
-  //270,
+  //270 NA
   269,
   268,
   267,
@@ -260,13 +337,13 @@ static int included_patches[] = {
   261,
   260,
   //259,
-  //258,
-  //257,
+  //258 NA
+  //257 NA
   //256,
   //255,
   //254,
   253,
-  //252,
+  //252 NA
   251,
   //250,
   //249,
@@ -287,77 +364,77 @@ static int included_patches[] = {
   234,
   233,
   232,
-  //231,
-  //230,
+  231,
+  230,
   229,
-  //228,
-  //227,
+  //228 NA
+  //227 NA
   226,
-  //225,
-  //224,
-  //223,
-  //222,
+  //225 NA
+  //224 NA
+  //223 NA
+  //222 NA
   221,
   //220,
   219,
   218,
-  //217,
-  //216,
+  //217 NA
+  //216 NA
   215,
-  //214,
+  //214 NA
   213,
-  //212,
+  //212 NA
   //211,
   210,
   209,
-  //208,
+  //208 NA
   207,
-  //206,
+  //206 NA
   205,
   204,
   203,
-  //202,
-  //201,
-  //200,
+  //202 NA
+  201,
+  //200 NA
   199,
-  //198,
-  //197,
-  //196,
-  //195,
-  //194,
+  //198 NA
+  //197 NA
+  //196 NA
+  //195 NA
+  //194 NA
   193,
   192,
   191,
-  //190,
-  //189,
-  //188,
+  //190 NA
+  //189 NA
+  //188 NA
   187,
   186,
-  //185,
+  //185 NA
   184,
-  //183,
-  //182,
+  //183 NA
+  //182 NA
   181,
-  //180,
-  //179,
+  //180 NA
+  //179 NA
   178,
-  //177,
-  //176,
-  //175,
-  //174,
+  //177 NA
+  //176 NA
+  //175 NA
+  //174 NA
   173,
   172,
   171,
   170,
   169,
-  //168,
+  //168 NA
   167,
   166,
-  //165,
-  //164,
-  //163,
-  //162,
-  //161,
+  165,
+  //164 NA
+  //163 NA
+  //162 NA
+  //161 NA
   160,
   159,
   158,
